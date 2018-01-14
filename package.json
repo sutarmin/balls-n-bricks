@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "watch": "webpack --watch"
+  },
+  "devDependencies": {
+    "webpack": "^3.10.0"
+  }
+}
