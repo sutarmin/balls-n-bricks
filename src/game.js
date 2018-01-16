@@ -1,4 +1,4 @@
-import { MainStage } from './stages/main'
+import { MainStage } from 'stages/main'
 
 class Game {
     constructor(canvas) {

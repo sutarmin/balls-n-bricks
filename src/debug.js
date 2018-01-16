@@ -6,7 +6,7 @@ import { GAME_SETTINGS } from './game-settings';
 function onLoad() {
     const ffBtn = document.getElementById('ff');
     ffBtn.onmousedown = () => {
-        game.setSpeed(GAME_SETTINGS.GAME_SPEED*10);
+        game.setSpeed(GAME_SETTINGS.GAME_SPEED * 10);
     }
     ffBtn.onmouseup = () => {
         game.setSpeed(GAME_SETTINGS.GAME_SPEED);
@@ -26,10 +26,10 @@ function renderDebugWindow() {
     const game = window.game;
     const stage = game.currentStage;
     if (stage instanceof MainStage) {
-        document.getElementById("ball0-x").innerText = stage.balls[0].x.toFixed(2);
-        document.getElementById("ball0-y").innerText = stage.balls[0].y.toFixed(2);
+        document.getElementById("ball0-x").innerText = stage.field.balls[0].x.toFixed(2);
+        document.getElementById("ball0-y").innerText = stage.field.balls[0].y.toFixed(2);
         if (stage.mousePosition) {
-            const angle = calcAngle(stage.base, stage.mousePosition) * 180 / Math.PI;
+            const angle = calcAngle(stage.field.base, stage.field.mousePosition) * 180 / Math.PI;
             document.getElementById("aimingPosition").innerText = angle.toFixed(2);
         }
     }    

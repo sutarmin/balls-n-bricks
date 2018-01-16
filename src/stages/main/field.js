@@ -1,28 +1,33 @@
-import { renderDebugWindow } from '../debug';
+import { GAME_SETTINGS } from 'game-settings';
+import { getRelMousePosition } from 'canvas';
+import { calcAngle, distBetweenPoints } from 'geometry';
 
-import { GAME_SETTINGS } from "../game-settings";
-import { getRelMousePosition } from '../canvas';
-import { calcAngle, distBetweenPoints } from '../geometry';
-import { Ball } from '../ball';
-import { Brick } from '../brick';
+import { Ball } from "ball";
+import { Brick } from "brick";
 
-class MainStage {
-    constructor(ctx) {
+class Field {
+    constructor(ctx, position, initState = {}) {
         this.ctx = ctx;
+        this.position = {
+            top: position.top || 0,
+            bottom: position.bottom || ctx.canvas.height,
+            left: position.left || 0,
+            right: position.right || ctx.canvas.width
+        }
+        if (this.position.bottom < 0) {
+            this.position.bottom = ctx.canvas.height + this.position.bottom;
+        }
+        if (this.position.right < 0) {
+            this.position.right = ctx.canvas.width + this.position.right;
+        }
+        this.width = this.position.right - this.position.left;
+        this.height = this.position.bottom - this.position.top;
+        const defaultState = {
+            level: 10,
+        };
+        this.state = Object.assign({}, defaultState, initState);
+        this.action = Field.Actions.AIMING; 
 
-        this.state = MainStage.States.AIMING; 
-        this.speed = GAME_SETTINGS.GAME_SPEED;
-        setTimeout(this.startNewGame.bind(this), 0);
-    }
-
-    setEventHandlers() {
-        this.ctx.canvas.onclick = this.canvasClickHandler.bind(this);
-        this.ctx.canvas.onmousemove = this.canvasMouseMoveHandler.bind(this);
-
-    }
-
-    startNewGame() {
-        
         const { 
             BALL_RADIUS, 
             BALL_COLOR,
@@ -30,20 +35,14 @@ class MainStage {
             BALL_SPEED,
         } = GAME_SETTINGS;
 
-        this.isFreezed = false;
-        // this.ctx.canvas.height = ;
-        this.field 
         this.base = {
-            x: 3 * this.ctx.canvas.width / 5,
-            y: this.ctx.canvas.height - 20,
+            x: this.width / 2,
+            y: this.position.bottom,
         };
 
-        this.level = 10;
-        const ballsCount = this.level;
-
+        const ballsCount = this.state.level;
         this.balls = [];
-        for (let i = 0; i < ballsCount; i++) {
-            const angle = this.shootingAngle;        
+        for (let i = 0; i < ballsCount; i++) {      
             const ball = new Ball(this.base.x, this.base.y - BALL_RADIUS);
             ball.setSpeed(BALL_SPEED);
             this.balls.push(ball);
@@ -51,43 +50,9 @@ class MainStage {
         this.bricks = [];
         this.setEventHandlers();        
         this.generateBricks();
-        requestAnimationFrame(this.gameLoop.bind(this));
     }
 
-    generateBricks() {
-        const ctx = this.ctx;
-        const brickMargin = GAME_SETTINGS.BRICK_MARGIN;
-        this.cellSize = ctx.canvas.width / GAME_SETTINGS.FIELD_WIDTH;
-        const brickSize = this.cellSize - 2*brickMargin;
-
-        ctx.save();
-        ctx.strokeStyle = 'green';
-        for (let j = 0; j < 8; j++) {
-            for (let i = 0; i < GAME_SETTINGS.FIELD_WIDTH; i++) {
-                if (Math.random() > 0.5) {
-                    const lives = Math.floor(Math.random() * this.level) + 1;
-                    const brick = new Brick(this.cellSize*i + brickMargin, this.cellSize*j + brickMargin, brickSize, lives); 
-                    this.bricks.push(brick);
-                }
-            }
-        }
-        ctx.restore();
-    }
-
-    gameLoop() {
-        if (!this.isFreezed) {
-            let ticks = 0;
-            while(ticks < this.speed) {
-                this.gameTick();
-                ticks++;
-            }
-        }
-        renderDebugWindow();
-        requestAnimationFrame(this.gameLoop.bind(this));
-    }
-
-    gameTick() {
-        const { ctx, canvas } = this;
+    tick() {
         const {
             BACKGROUND
         } = GAME_SETTINGS;
@@ -98,14 +63,14 @@ class MainStage {
         }
         this.drawBricks();
         this.drawBallsCount();
-        switch (this.state) {
-            case MainStage.States.SHOOTING:
+        switch (this.action) {
+            case Field.Actions.SHOOTING:
                 this.handleShooting();
                 break;
-            case MainStage.States.AIMING:
+            case Field.Actions.AIMING:
                 this.handleAiming();
                 break;
-            case MainStage.States.WAITING_BRICKS:
+            case Field.Actions.WAITING_BRICKS:
                 this.handleBricksMovement();
                 break;
             default:
@@ -113,27 +78,97 @@ class MainStage {
         }
     }
 
+    setAction(action) {
+        switch (action) {
+            case Field.Actions.AIMING:
+                break;
+            case Field.Actions.SHOOTING:
+                this.balls.forEach(ball => {
+                    ball.state = Ball.State.WAITING;
+                });
+                this.balls[0].state = Ball.State.FLYING;
+                this.ticksFromLastShootedBall = 0;
+                break;
+            case Field.Actions.WAITING_BRICKS:
+                this.shootingAngle = void 0;
+                this.base = this.nextBase;
+                this.nextBase = void 0;
+                this.brickMovementTicks = 0;
+                this.generateNewBrickRow();                
+                break;
+            default:
+                throw new Error("no handlers for state " + action);
+        }
+        this.action = action;
+    }
+
+    //#region event handling funcitions
+    
+    setEventHandlers() {
+        this.ctx.canvas.onclick = this.canvasClickHandler.bind(this);
+        this.ctx.canvas.onmousemove = this.canvasMouseMoveHandler.bind(this);
+    }
+
+    canvasClickHandler(e) {
+        switch (this.action) {
+            case Field.Actions.AIMING:
+                this.setShootingAngleToPoint(
+                    getRelMousePosition(this.ctx.canvas, e)
+                );
+                break;
+            default:
+                console.log('mouse click has no handling for game state ' + this.action);
+        }
+    }
+
+    canvasMouseMoveHandler(e) {
+        const mouseCoords = getRelMousePosition(this.ctx.canvas, e);
+        this.mousePosition = mouseCoords;
+    }
+    //#endregion
+
+    //#region bricks generation
+
+    generateBricks() {
+        const ctx = this.ctx;
+        const brickMargin = GAME_SETTINGS.BRICK_MARGIN;
+        this.cellSize = this.width / GAME_SETTINGS.FIELD_WIDTH;
+        const brickSize = this.cellSize - 2 * brickMargin;
+
+        ctx.save();
+        ctx.strokeStyle = 'green';
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < GAME_SETTINGS.FIELD_WIDTH; i++) {
+                if (Math.random() > 0.5) {
+                    const lives = Math.floor(Math.random() * this.state.level) + 1;
+                    const brick = new Brick(this.position.left + this.cellSize*i + brickMargin,
+                                            this.position.top + this.cellSize*j + brickMargin, 
+                                            brickSize, 
+                                            lives); 
+                    this.bricks.push(brick);
+                }
+            }
+        }
+        ctx.restore();
+    }
+
     generateNewBrickRow() {
         const brickMargin = GAME_SETTINGS.BRICK_MARGIN;
         const brickSize = this.cellSize - 2*brickMargin;
         for (let i = 0; i < GAME_SETTINGS.FIELD_WIDTH; i++) {
             if (Math.random() > 0.5) {
-                const lives = Math.floor(Math.random() * this.level) + 1;
-                const brick = new Brick(this.cellSize*i + brickMargin, -this.cellSize + brickMargin, brickSize, lives); 
+                const lives = Math.floor(Math.random() * this.state.level) + 1;
+                const brick = new Brick(this.position.left + this.cellSize*i + brickMargin, 
+                                        this.position.top - this.cellSize + brickMargin, 
+                                        brickSize, 
+                                        lives); 
                 this.bricks.push(brick);
             }
         }
     }
+    //#endregion
 
-    handleBricksMovement() {
-        this.brickMovementTicks++;
-        this.bricks.forEach(brick => {
-            brick.setY(brick.y + this.cellSize / 30);
-        });
-        if (this.brickMovementTicks === 30) {
-            this.setState(MainStage.States.AIMING);
-        }
-    }
+    //#region drawing functions
 
     drawBallsCount() {
         let count = 0;
@@ -166,12 +201,40 @@ class MainStage {
 
         ctx.strokeStyle = '#fff';
         ctx.beginPath();
-        ctx.moveTo(0, this.base.y);
-        ctx.lineTo(canvas.width, this.base.y);
+        ctx.moveTo(this.position.left, this.position.bottom);
+        ctx.lineTo(this.position.right, this.position.bottom);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.moveTo(this.position.left, this.position.top);
+        ctx.lineTo(this.position.right, this.position.top);
         ctx.stroke();
         ctx.closePath();
         ctx.restore();
     }
+
+    drawBricks() {
+        for(const brick of this.bricks) {
+            brick.draw(this.ctx);
+        }
+    }
+
+    drawAim(toPoint) {
+
+        const { ctx, base } = this;
+        ctx.save();
+        ctx.strokeStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(base.x, base.y - GAME_SETTINGS.BALL_RADIUS);
+        ctx.lineTo(toPoint.x, toPoint.y);
+        ctx.stroke();
+        ctx.restore();
+    }
+    
+    //#endregion
+
+    //#region debug functions
 
     DEBUG_drawBricksCells() {
         const ctx = this.ctx;
@@ -193,54 +256,10 @@ class MainStage {
     DEBUG_triggerFreeze() {
         this.isFreezed = !this.isFreezed;
     }
-
-    drawBricks() {
-        for(const brick of this.bricks) {
-            brick.draw(this.ctx);
-        }
-    }
-
-    canvasClickHandler(e) {
-        switch (this.state) {
-            case MainStage.States.AIMING:
-                this.setShootingAngleToPoint(
-                    getRelMousePosition(this.ctx.canvas, e)
-                );
-                break;
-            default:
-                console.log('mouse click has no handling for game state ' + this.state);
-        }
-    }
-
-    canvasMouseMoveHandler(e) {
-        const mouseCoords = getRelMousePosition(this.ctx.canvas, e);
-        this.mousePosition = mouseCoords;
-    }
-
-    setState(state) {
-        switch (state) {
-            case MainStage.States.AIMING:
-                break;
-            case MainStage.States.SHOOTING:
-                this.balls.forEach(ball => {
-                    ball.state = Ball.State.WAITING;
-                });
-                this.balls[0].state = Ball.State.FLYING;
-                this.ticksFromLastShootedBall = 0;
-                break;
-            case MainStage.States.WAITING_BRICKS:
-                this.shootingAngle = void 0;
-                this.base = this.nextBase;
-                this.nextBase = void 0;
-                this.brickMovementTicks = 0;
-                this.generateNewBrickRow();                
-                break;
-            default:
-                throw new Error("no handlers for state " + state);
-        }
-        this.state = state;
-    }
+    //#endregion
     
+    //#region actions handlers
+
     handleShooting() {
         this.ticksFromLastShootedBall++ ;
         this.checkBorderCollisions();
@@ -275,12 +294,12 @@ class MainStage {
         });
         if (this.balls.every(ball => ball.state === Ball.State.RETURNED)) {
             this.balls.forEach(ball => ball.state = Ball.State.WAITING);
-            this.setState(MainStage.States.WAITING_BRICKS);
+            this.setAction(Field.Actions.WAITING_BRICKS);
         }
     }
 
     handleAiming() {
-        if (this.shootingAngle === void 0) {
+        if (this.shootingAngle === undefined) {
             this.balls.forEach(ball => {
                 ball.draw(this.ctx);
             });
@@ -300,22 +319,36 @@ class MainStage {
                 ball.setAngle(this.shootingAngle);
                 ball.draw(this.ctx);
             });       
-            this.setState(MainStage.States.SHOOTING);
+            this.setAction(Field.Actions.SHOOTING);
         }
         
     }
 
+    handleBricksMovement() {
+        this.brickMovementTicks++;
+        this.bricks.forEach(brick => {
+            brick.setY(brick.y + this.cellSize / 30);
+        });
+        if (this.brickMovementTicks === 30) {
+            this.setAction(Field.Actions.AIMING);
+        }
+    }
+
+    //#endregion
+
+    //#region checker functions
+
     checkBorderCollisions() {
-        const width = this.ctx.canvas.width;
+        const width = this.width;
         const height = this.base.y;
         this.balls.forEach(ball => {
             
-            if (ball.x - ball.radius < 0 || 
-                ball.x + ball.radius > width) {
+            if (ball.x - ball.radius < this.position.left || 
+                ball.x + ball.radius > this.position.right) {
                 ball.setAngle(Math.PI - ball.angle);
             }
-            if (ball.y - ball.radius < 0 || 
-                ball.y + ball.radius > height) {
+            if (ball.y - ball.radius < this.position.top || 
+                ball.y + ball.radius > this.position.bottom) {
                 ball.setAngle(-ball.angle);
             } 
         });
@@ -343,7 +376,7 @@ class MainStage {
     }
 
     checkReturnedBalls() {
-        const width = this.ctx.canvas.width;
+        const width = this.width;
         const height = this.base.y;
         this.balls.forEach(ball => {
             const nextBallCoords = ball.nextCoords();
@@ -355,21 +388,9 @@ class MainStage {
         });
     }
 
-    setSpeed(newSpeed) {
-        this.speed = newSpeed;
-    }
+    //#endregion
 
-    drawAim(toPoint) {
-
-        const { ctx, base } = this;
-        ctx.save();
-        ctx.strokeStyle = '#fff';
-        ctx.beginPath();
-        ctx.moveTo(base.x, base.y - GAME_SETTINGS.BALL_RADIUS);
-        ctx.lineTo(toPoint.x, toPoint.y);
-        ctx.stroke();
-        ctx.restore();
-    }
+    // other functions
 
     setShootingAngleToPoint(point) {
         const angle = calcAngle(this.base, point);
@@ -378,12 +399,12 @@ class MainStage {
 
 }
 
-MainStage.States = {
+Field.Actions = {
     AIMING: 0,
     SHOOTING: 1,
     WAITING_BRICKS: 2
 }
 
 export {
-    MainStage
+    Field
 }
