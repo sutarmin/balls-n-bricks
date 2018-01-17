@@ -7,6 +7,7 @@ const GAME_SETTINGS = {
     BACKGROUND: '#333',
     GAME_SPEED: 3, // только целые
     FIELD_WIDTH: 7,
+    FIELD_HEIGHT: 10,
     TICKS_BETWEEN_BALLS: 10,
     BRICK_MARGIN: 2,
     DEBUG: false

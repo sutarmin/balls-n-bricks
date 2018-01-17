@@ -12,7 +12,7 @@ class MainStage {
         this.ctx = ctx;
 
         const fieldPosition = {
-            top: 0,
+            top: 60,
             bottom: -30,
             // left: 40,
             // right: -40,

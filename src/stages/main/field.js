@@ -22,8 +22,24 @@ class Field {
         }
         this.width = this.position.right - this.position.left;
         this.height = this.position.bottom - this.position.top;
+        this.brickSettings = { };
+        this.brickSettings.brickMargin = GAME_SETTINGS.BRICK_MARGIN;
+        this.brickSettings.cellSize = this.width / GAME_SETTINGS.FIELD_WIDTH;
+        this.brickSettings.brickSize = this.brickSettings.cellSize - 2 * this.brickSettings.brickMargin;
+
+        if (this.height !== this.brickSettings.cellSize * GAME_SETTINGS.FIELD_HEIGHT) {
+            const offset = this.brickSettings.cellSize * GAME_SETTINGS.FIELD_HEIGHT - this.height;
+            this.ctx.canvas.height += offset;
+            this.height += offset;
+            this.position.bottom += offset;
+        }
+
+        this.startNewGame(initState);
+    }
+
+    startNewGame(initState = {}) {
         const defaultState = {
-            level: 10,
+            level: 1,
         };
         this.state = Object.assign({}, defaultState, initState);
         this.action = Field.Actions.AIMING; 
@@ -73,6 +89,9 @@ class Field {
             case Field.Actions.WAITING_BRICKS:
                 this.handleBricksMovement();
                 break;
+            case Field.Actions.GAMEOVER:
+                this.handleGameOver();
+                break;
             default:
                 throw new Error ('game state is not set');               
         }
@@ -81,6 +100,9 @@ class Field {
     setAction(action) {
         switch (action) {
             case Field.Actions.AIMING:
+                break;
+            case Field.Actions.GAMEOVER:
+                this.gameOverTicks = 0;
                 break;
             case Field.Actions.SHOOTING:
                 this.balls.forEach(ball => {
@@ -131,18 +153,16 @@ class Field {
 
     generateBricks() {
         const ctx = this.ctx;
-        const brickMargin = GAME_SETTINGS.BRICK_MARGIN;
-        this.cellSize = this.width / GAME_SETTINGS.FIELD_WIDTH;
-        const brickSize = this.cellSize - 2 * brickMargin;
+        const { brickMargin, brickSize, cellSize } = this.brickSettings;
 
         ctx.save();
         ctx.strokeStyle = 'green';
-        for (let j = 0; j < 8; j++) {
+        for (let j = 1; j < 9; j++) {
             for (let i = 0; i < GAME_SETTINGS.FIELD_WIDTH; i++) {
                 if (Math.random() > 0.5) {
                     const lives = Math.floor(Math.random() * this.state.level) + 1;
-                    const brick = new Brick(this.position.left + this.cellSize*i + brickMargin,
-                                            this.position.top + this.cellSize*j + brickMargin, 
+                    const brick = new Brick(this.position.left + cellSize*i + brickMargin,
+                                            this.position.top + cellSize*j + brickMargin, 
                                             brickSize, 
                                             lives); 
                     this.bricks.push(brick);
@@ -153,13 +173,12 @@ class Field {
     }
 
     generateNewBrickRow() {
-        const brickMargin = GAME_SETTINGS.BRICK_MARGIN;
-        const brickSize = this.cellSize - 2*brickMargin;
+        const { brickMargin, brickSize, cellSize } = this.brickSettings;
         for (let i = 0; i < GAME_SETTINGS.FIELD_WIDTH; i++) {
             if (Math.random() > 0.5) {
                 const lives = Math.floor(Math.random() * this.state.level) + 1;
-                const brick = new Brick(this.position.left + this.cellSize*i + brickMargin, 
-                                        this.position.top - this.cellSize + brickMargin, 
+                const brick = new Brick(this.position.left + cellSize*i + brickMargin, 
+                                        this.position.top + brickMargin, 
                                         brickSize, 
                                         lives); 
                 this.bricks.push(brick);
@@ -230,6 +249,22 @@ class Field {
         ctx.lineTo(toPoint.x, toPoint.y);
         ctx.stroke();
         ctx.restore();
+    }
+
+    drawGameOver(smileSize) {
+        const ctx = this.ctx;
+        const {top, left } = this.position;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(left, top, this.width, this.height); 
+
+        ctx.font = smileSize + 'px Arial';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+
+        ctx.fillText(':(', this.width / 2 + left, this.height / 2 + top);
+
+        ctx.restore();   
     }
     
     //#endregion
@@ -327,10 +362,23 @@ class Field {
     handleBricksMovement() {
         this.brickMovementTicks++;
         this.bricks.forEach(brick => {
-            brick.setY(brick.y + this.cellSize / 30);
+            brick.setY(brick.y + this.brickSettings.cellSize / 30);
         });
         if (this.brickMovementTicks === 30) {
-            this.setAction(Field.Actions.AIMING);
+            if (!this.isGameOver()) {
+                this.setAction(Field.Actions.AIMING);
+            } else {
+                this.setAction(Field.Actions.GAMEOVER);            
+            }
+        }
+    }
+
+    handleGameOver() {
+        this.drawGameOver(this.gameOverTicks);        
+        this.gameOverTicks++;
+        if (this.gameOverTicks > 180) {
+            this.startNewGame();
+            return;
         }
     }
 
@@ -355,7 +403,6 @@ class Field {
     }
 
     checkBricksCollisions() {
-        const removeIndices = [];
         this.bricks.forEach((brick, brickIndex) => {
             this.balls.forEach((ball, ballIndex) => {
                 const newBallAngle = brick.calcNewBallAngle(ball);
@@ -371,8 +418,6 @@ class Field {
                 }
             });
         });
-        for (let index of removeIndices) {
-        }
     }
 
     checkReturnedBalls() {
@@ -386,6 +431,12 @@ class Field {
                 ball.y = height - ball.radius;                
             }
         });
+    }
+
+    isGameOver() {
+        return this.bricks.some(brick => 
+            brick.y + this.brickSettings.cellSize >= this.position.top + this.height
+        );
     }
 
     //#endregion
@@ -402,7 +453,8 @@ class Field {
 Field.Actions = {
     AIMING: 0,
     SHOOTING: 1,
-    WAITING_BRICKS: 2
+    WAITING_BRICKS: 2,
+    GAMEOVER: 3
 }
 
 export {
